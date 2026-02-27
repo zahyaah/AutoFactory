@@ -1,47 +1,45 @@
 import os
-import asyncio
-import psycopg2
 import json
+from functools import lru_cache
+from pathlib import Path
 from dotenv import load_dotenv
 from autogen_agentchat.agents import AssistantAgent 
 from autogen_ext.models.openai import AzureOpenAIChatCompletionClient
 
 load_dotenv()
 
-# -------------------------
-# Database Connection
-# -------------------------
+PRODUCTION_DATA_PATH = (Path(__file__).resolve().parent.parent / "json-data" / "production_data.json")
 
 def get_production_data(target_date):
     """
     Fetches production data for a specific date passed by the Orchestrator.
     """
-    conn = psycopg2.connect(
-        host="localhost", 
-        port=5432,
-        database=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD"),
-    )
+    target_date_str = str(target_date)
+    total_units = 0
+    total_downtime_minutes = 0
 
-    cursor = conn.cursor()
-    # SQL changed from CURRENT_DATE to a parameterized date (%s)
-    cursor.execute("""
-        SELECT 
-            COALESCE(SUM(units_produced), 0),
-            COALESCE(SUM(downtime_minutes), 0)
-        FROM production_logs
-        WHERE date = %s;
-    """, (target_date,))
-
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
+    for row in _load_production_rows():
+        if str(row.get("date")) != target_date_str:
+            continue
+        total_units += int(row.get("units_produced", 0) or 0)
+        total_downtime_minutes += int(row.get("downtime_minutes", 0) or 0)
 
     return {
-        "total_units": result[0],
-        "total_downtime_minutes": result[1]
+        "total_units": total_units,
+        "total_downtime_minutes": total_downtime_minutes
     }
+
+@lru_cache(maxsize=1)
+def _load_production_rows():
+    """
+    Loads production rows from json-data/production_data.json.
+    Cached to avoid re-reading the file on repeated calls.
+    """
+    with open(PRODUCTION_DATA_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a list of rows in {PRODUCTION_DATA_PATH}, got {type(data).__name__}")
+    return data
 
 
 # -------------------------
@@ -50,7 +48,7 @@ def get_production_data(target_date):
 
 model_client = AzureOpenAIChatCompletionClient(
     model="gpt-4o-2024-05-13",
-    azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+    azure_deployment=os.getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
     api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
     azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
     api_key=os.getenv("AZURE_OPENAI_KEY"),

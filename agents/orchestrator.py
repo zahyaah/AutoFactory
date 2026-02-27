@@ -1,7 +1,8 @@
 import asyncio
 import json
-import psycopg2
-import os
+import random
+from functools import lru_cache
+from pathlib import Path
 from pydantic import BaseModel
 from rich.console import Console
 from rich.panel import Panel
@@ -16,6 +17,11 @@ from production_agent import production_agent, get_production_data
 from inventory_agent import inventory_agent, get_inventory_data
 from quality_agent import quality_agent, get_quality_data
 
+JSON_DATA_DIR = (Path(__file__).resolve().parent.parent / "json-data")
+QUALITY_DATA_PATH = JSON_DATA_DIR / "quality_data.json"
+PRODUCTION_DATA_PATH = JSON_DATA_DIR / "production_data.json"
+INVENTORY_DATA_PATH = JSON_DATA_DIR / "inventory_data.json"
+
 class FactoryReport(BaseModel):
     simulated_date: str
     production: str
@@ -24,30 +30,55 @@ class FactoryReport(BaseModel):
 
 def get_shared_simulated_date():
     """Pick one random date from the dataset to sync all agents."""
-    conn = psycopg2.connect(
-        host="localhost",
-        database=os.getenv("POSTGRES_DB"),
-        user=os.getenv("POSTGRES_USER"),
-        password=os.getenv("POSTGRES_PASSWORD")
-    )
-    cursor = conn.cursor()
-    
-    # Wrap the DISTINCT dates in a subquery so we can RANDOM() the result set
-    query = """
-        SELECT date FROM (
-            SELECT DISTINCT date 
-            FROM quality_reports 
-            WHERE date BETWEEN '2026-01-01' AND '2026-01-31'
-        ) as subquery
-        ORDER BY RANDOM() 
-        LIMIT 1;
-    """
-    
-    cursor.execute(query)
-    date = cursor.fetchone()[0]
-    cursor.close()
-    conn.close()
-    return str(date)
+    start_date = "2026-01-01"
+    end_date = "2026-01-31"
+
+    quality_dates = {
+        str(row.get("date"))
+        for row in _load_quality_rows()
+        if start_date <= str(row.get("date")) <= end_date
+    }
+    production_dates = {
+        str(row.get("date"))
+        for row in _load_production_rows()
+        if start_date <= str(row.get("date")) <= end_date
+    }
+
+    # Inventory is a snapshot (no date in dataset) but we still load it
+    # so we're utilizing all json-data sources consistently.
+    _ = _load_inventory_rows()
+
+    shared_dates = sorted(quality_dates & production_dates)
+    if not shared_dates:
+        shared_dates = sorted(quality_dates or production_dates)
+    if not shared_dates:
+        raise ValueError("No simulated dates found in json-data datasets.")
+
+    return random.choice(shared_dates)
+
+@lru_cache(maxsize=1)
+def _load_quality_rows():
+    with open(QUALITY_DATA_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a list of rows in {QUALITY_DATA_PATH}, got {type(data).__name__}")
+    return data
+
+@lru_cache(maxsize=1)
+def _load_production_rows():
+    with open(PRODUCTION_DATA_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a list of rows in {PRODUCTION_DATA_PATH}, got {type(data).__name__}")
+    return data
+
+@lru_cache(maxsize=1)
+def _load_inventory_rows():
+    with open(INVENTORY_DATA_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        raise ValueError(f"Expected a list of rows in {INVENTORY_DATA_PATH}, got {type(data).__name__}")
+    return data
 
 async def run_factory_report() -> FactoryReport:
     sim_date = get_shared_simulated_date()

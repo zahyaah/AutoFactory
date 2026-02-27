@@ -4,7 +4,6 @@ autogen-ext[openai,azure]
 asyncio
 dotenv
 openai
-psycopg2-binary
 streamlit
 rich 
 pydantic 

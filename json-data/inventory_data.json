@@ -1,0 +1,21 @@
+[
+    {
+      "id": 1,
+      "material_name": "Steel",
+      "current_stock": 885,
+      "reorder_level": 300
+    },
+    {
+      "id": 2,
+      "material_name": "Plastic",
+      "current_stock": 412,
+      "reorder_level": 350
+    },
+    {
+      "id": 3,
+      "material_name": "Aluminum",
+      "current_stock": 506,
+      "reorder_level": 250
+    }
+]
+  
